@@ -15,7 +15,7 @@
 
 ```bash
 # 克隆仓库
-git clone <仓库地址>
+git clone https://github.com/alighhjj/smart-chat.git
 cd ai-chat-app
 
 # 安装依赖
@@ -34,9 +34,13 @@ npm start
 ```bash
 # 安装依赖
 npm install
+# 本地已安装的，直接拷贝node_modules文件夹到项目根目录下
 
 # 启动开发模式
 npm run dev
+
+# 在vscode中调试可直接在命令行运行
+start-cn.bat
 ```
 
 ## 技术栈
