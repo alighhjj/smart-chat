@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <!-- https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="./styles.css" rel="stylesheet">
+    <title>AI Chat 应用</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- 你的React应用将在这里渲染 -->
+    
+    <!-- 引入React脚本 -->
+    <script src="./node_modules/react/umd/react.development.js"></script>
+    <script src="./node_modules/react-dom/umd/react-dom.development.js"></script>
+    
+    <!-- 引入应用程序脚本 -->
+    <script src="./renderer.js"></script>
+  </body>
+</html>
