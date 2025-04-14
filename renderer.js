@@ -36,9 +36,10 @@ const ThinkingSection = ({ thinking }) => {
         React.createElement('div', { className: 'thinking-section-title' },
             '思考过程'
         ),
-        React.createElement('div', { className: 'thinking-content' },
-            thinking
-        )
+        React.createElement('div', { 
+            className: 'thinking-content',
+            dangerouslySetInnerHTML: { __html: marked.parse(thinking) }
+        })
     );
 };
 
@@ -148,12 +149,88 @@ const ApiKeyModal = ({ isOpen, onClose, onSave }) => {
     );
 };
 
+// 创建动态加载指示器组件
+const TypingIndicator = () => {
+    return React.createElement('div', { className: 'typing-indicator' },
+        React.createElement('span', null),
+        React.createElement('span', null),
+        React.createElement('span', null)
+    );
+};
+
+// 创建消息组件
+const Message = ({ message }) => {
+    const { text, sender, thinking, error, isThinking } = message;
+    
+    // 如果是思考状态，显示思考动画
+    if (isThinking) {
+        return React.createElement('div', { className: 'message-wrapper' },
+            React.createElement('div', { className: 'typing-indicator' },
+                React.createElement('span', null),
+                React.createElement('span', null),
+                React.createElement('span', null)
+            )
+        );
+    }
+
+    const messageClass = `message ${sender === 'bot' ? 'bot-message' : 'user-message'} ${error ? 'error-message' : ''}`;
+
+    return React.createElement('div', { className: 'message-wrapper' },
+        thinking && React.createElement(ThinkingSection, { thinking }),
+        React.createElement('div', { 
+            className: messageClass,
+            dangerouslySetInnerHTML: { __html: text ? marked.parse(text) : '' }
+        })
+    );
+};
+
+// 创建固定菜单栏组件
+const FixedSidebar = ({ onOpenApiKey, hasApiKey }) => {
+    return React.createElement('div', { className: 'fixed-sidebar' },
+        React.createElement('div', {
+            className: `sidebar-icon ${hasApiKey ? 'has-api-key' : ''}`,
+            onClick: onOpenApiKey,
+            title: '设置 API Key'
+        }, '🤖'),
+        React.createElement('div', {
+            className: 'sidebar-icon',
+            title: '聊天记录'
+        }, '📋'),
+        React.createElement('div', {
+            className: 'sidebar-icon',
+            title: '设置'
+        }, '⚙️')
+    );
+};
+
+// 创建聊天列表栏组件
+const ChatSidebar = ({ onNewChat, isSidebarCollapsed, onToggleSidebar }) => {
+    return React.createElement('div', { className: `chat-sidebar ${isSidebarCollapsed ? 'collapsed' : ''}` },
+        React.createElement('div', { className: 'chat-sidebar-header' },
+            React.createElement('h1', { className: 'app-title' }, 'AI Chat'),
+            React.createElement('button', {
+                className: 'toggle-sidebar',
+                onClick: onToggleSidebar,
+                title: isSidebarCollapsed ? '展开' : '收起'
+            }, isSidebarCollapsed ? '→' : '←')
+        ),
+        React.createElement('div', { className: 'chat-list' },
+            // 这里可以添加聊天列表项
+        ),
+        React.createElement('button', {
+            className: 'new-chat-button',
+            onClick: onNewChat,
+            title: '新建对话'
+        },
+            React.createElement('span', { className: 'plus-icon' }, '+'),
+            !isSidebarCollapsed && React.createElement('span', null, '新建对话')
+        )
+    );
+};
+
 // 创建App组件
 const App = () => {
-    const [messages, setMessages] = React.useState([
-        { id: 1, text: '👋 晚上好', sender: 'bot' },
-        { id: 2, text: '我是您的私人智能助理 LobeChat，请问现在能帮您做什么？', sender: 'bot' }
-    ]);
+    const [messages, setMessages] = React.useState([]);
     const [inputValue, setInputValue] = React.useState('');
     const [isTyping, setIsTyping] = React.useState(false);
     const messagesEndRef = React.useRef(null);
@@ -161,6 +238,7 @@ const App = () => {
     const [currentApiKey, setCurrentApiKey] = React.useState('');
     const [availableModels, setAvailableModels] = React.useState([]);
     const [currentModel, setCurrentModel] = React.useState(null);
+    const [isSidebarCollapsed, setIsSidebarCollapsed] = React.useState(false);
 
     // 加载可用模型和当前选择的模型
     React.useEffect(() => {
@@ -194,14 +272,6 @@ const App = () => {
                 .then(newModel => {
                     setCurrentModel(newModel);
                     setIsTyping(false);
-
-                    // 提示用户模型已切换
-                    const botResponse = {
-                        id: Date.now(),
-                        text: `已切换到 ${newModel.name} 模型。${newModel.description}`,
-                        sender: 'bot'
-                    };
-                    setMessages(prevMessages => [...prevMessages, botResponse]);
                 })
                 .catch(err => {
                     console.error('切换模型失败:', err);
@@ -272,41 +342,26 @@ const App = () => {
         }
     }, []);
 
-    // 发送消息处理函数
+    // 处理发送消息
     const handleSendMessage = () => {
-        if (inputValue.trim() === '') return;
+        if (!inputValue.trim()) return;
 
         // 添加用户消息
-        const newUserMessage = {
+        const userMessage = {
             id: Date.now(),
             text: inputValue,
             sender: 'user'
         };
-
-        // 更新消息列表
-        setMessages([...messages, newUserMessage]);
-
-        // 清空输入框
+        setMessages(prevMessages => [...prevMessages, userMessage]);
         setInputValue('');
-
-        // 显示输入中状态
         setIsTyping(true);
 
         // 发送消息到主进程
-        if (window.electronAPI) {
-            window.electronAPI.sendMessage(inputValue);
-        } else {
-            // 模拟AI响应（本地测试用）
-            setTimeout(() => {
+        window.electronAPI.sendMessage(inputValue)
+            .catch(err => {
+                console.error('发送消息失败:', err);
                 setIsTyping(false);
-                const botResponse = {
-                    id: Date.now() + 1,
-                    text: '我是一个简单的AI助手Demo，目前还不能真正回答问题，但未来会连接到真实的AI服务。',
-                    sender: 'bot'
-                };
-                setMessages(prevMessages => [...prevMessages, botResponse]);
-            }, 1500);
-        }
+            });
     };
 
     // 处理输入变化
@@ -322,32 +377,18 @@ const App = () => {
         }
     };
 
-    // 创建新对话
-    const handleNewChat = () => {
-        // 重置消息列表
-        setMessages([
-            { id: Date.now(), text: '👋 晚上好', sender: 'bot' },
-            { id: Date.now() + 1, text: '我是您的私人智能助理 LobeChat，请问现在能帮您做什么？', sender: 'bot' }
-        ]);
-
-        // 通知主进程重置聊天历史
-        if (window.electronAPI) {
-            window.electronAPI.newChat();
-        }
+    // 处理侧边栏收缩/展开
+    const handleToggleSidebar = () => {
+        setIsSidebarCollapsed(!isSidebarCollapsed);
     };
 
-    // 渲染单个消息
-    const renderMessage = (message) => {
-        return React.createElement('div', {
-            key: message.id,
-            className: `message ${message.sender === 'user' ? 'user-message' : 'bot-message'}${message.error ? ' error-message' : ''}`
-        },
-            // 如果是机器人回复且有思考步骤，则先显示思考步骤
-            message.sender === 'bot' && message.thinking &&
-            React.createElement(ThinkingSection, { thinking: message.thinking }),
-            // 然后显示消息内容
-            message.text
-        );
+    // 处理新建对话
+    const handleNewChat = () => {
+        if (window.electronAPI) {
+            window.electronAPI.newChat();
+            setMessages([]);
+            setInputValue('');
+        }
     };
 
     return React.createElement('div', { className: 'app-container' },
@@ -358,41 +399,30 @@ const App = () => {
             onSave: handleApiKeySaved
         }),
 
-        // 侧边栏
-        React.createElement('div', { className: 'sidebar' },
-            React.createElement('div', {
-                className: 'sidebar-icon' + (currentApiKey ? ' has-api-key' : ''),
-                onClick: openApiKeyModal,
-                title: '设置DeepSeek API Key'
-            }, '🤖'),
-            React.createElement('div', { className: 'sidebar-icon' }, '📋'),
-            React.createElement('div', { className: 'sidebar-icon' }, '⚙️')
-        ),
+        // 固定菜单栏
+        React.createElement(FixedSidebar, {
+            onOpenApiKey: openApiKeyModal,
+            hasApiKey: !!currentApiKey
+        }),
 
-        // 聊天列表
-        React.createElement('div', { className: 'chat-list' },
-            React.createElement('div', { className: 'chat-header' },
-                React.createElement('h2', null, '随便聊聊'),
-                React.createElement('button', {
-                    style: {
-                        border: 'none',
-                        background: 'none',
-                        fontSize: '24px',
-                        cursor: 'pointer'
-                    },
-                    onClick: handleNewChat
-                }, '+')
-            ),
-            React.createElement('div', { className: 'chat-item active' }, '新对话')
-        ),
+        // 聊天列表栏
+        React.createElement(ChatSidebar, {
+            onNewChat: handleNewChat,
+            isSidebarCollapsed: isSidebarCollapsed,
+            onToggleSidebar: handleToggleSidebar
+        }),
 
         // 主聊天区域
         React.createElement('div', { className: 'chat-container' },
-            // 消息区域
-            React.createElement('div', { className: 'chat-messages' },
-                messages.map(message => renderMessage(message)),
-                isTyping && React.createElement('div', { className: 'message bot-message' }, '正在输入...'),
-                React.createElement('div', { ref: messagesEndRef }) // 用于自动滚动
+            React.createElement('div', { className: 'chat-messages', ref: messagesEndRef },
+                messages.map(message =>
+                    React.createElement(Message, {
+                        key: message.id,
+                        message
+                    })
+                ),
+                isTyping && React.createElement(TypingIndicator),
+                React.createElement('div', { ref: messagesEndRef })
             ),
 
             // 输入区域
@@ -411,14 +441,9 @@ const App = () => {
                         value: inputValue,
                         onChange: handleInputChange,
                         onKeyPress: handleKeyPress,
-                        placeholder: '输入聊天内容...',
+                        placeholder: '输入聊天内容，按 Enter 发送...',
                         disabled: isTyping
-                    }),
-                    React.createElement('button', {
-                        className: 'send-button',
-                        onClick: handleSendMessage,
-                        disabled: isTyping || inputValue.trim() === ''
-                    }, '发送')
+                    })
                 )
             )
         )
@@ -438,13 +463,25 @@ let currentStreamingThinking = '';
 ipcRenderer.on('stream-start', (event, { messageId, modelName }) => {
     const messagesContainer = document.querySelector('.chat-messages');
     const messageDiv = document.createElement('div');
-    messageDiv.className = 'message bot-message streaming-message';
+    messageDiv.className = 'message-wrapper';
     messageDiv.setAttribute('data-message-id', messageId);
 
-    const contentDiv = document.createElement('div');
-    contentDiv.className = 'message-content';
+    const thinkingSection = document.createElement('div');
+    thinkingSection.className = 'thinking-section';
+    const thinkingTitle = document.createElement('div');
+    thinkingTitle.className = 'thinking-section-title';
+    thinkingTitle.textContent = '思考过程';
+    thinkingSection.appendChild(thinkingTitle);
+    
+    const thinkingContent = document.createElement('div');
+    thinkingContent.className = 'thinking-content';
+    thinkingSection.appendChild(thinkingContent);
+    messageDiv.appendChild(thinkingSection);
 
+    const contentDiv = document.createElement('div');
+    contentDiv.className = 'message bot-message streaming-message';
     messageDiv.appendChild(contentDiv);
+    
     messagesContainer.appendChild(messageDiv);
 
     currentStreamingMessage = messageDiv;
@@ -459,19 +496,12 @@ ipcRenderer.on('stream-start', (event, { messageId, modelName }) => {
 ipcRenderer.on('stream-chunk', (event, { chunk, isThinking }) => {
     if (!currentStreamingMessage) return;
 
-    const contentDiv = currentStreamingMessage.querySelector('.message-content');
+    const contentDiv = currentStreamingMessage.querySelector('.bot-message');
+    const thinkingContent = currentStreamingMessage.querySelector('.thinking-content');
 
     if (isThinking) {
         currentStreamingThinking += chunk;
-
-        // 更新思考过程显示
-        let thinkingSection = currentStreamingMessage.querySelector('.thinking-section');
-        if (!thinkingSection) {
-            thinkingSection = document.createElement('div');
-            thinkingSection.className = 'thinking-section';
-            currentStreamingMessage.appendChild(thinkingSection);
-        }
-        thinkingSection.innerHTML = marked.parse(currentStreamingThinking);
+        thinkingContent.innerHTML = marked.parse(currentStreamingThinking);
     } else {
         currentStreamingContent += chunk;
         contentDiv.innerHTML = marked.parse(currentStreamingContent);
@@ -489,7 +519,7 @@ ipcRenderer.on('stream-chunk', (event, { chunk, isThinking }) => {
 // 流式消息结束
 ipcRenderer.on('stream-end', () => {
     if (currentStreamingMessage) {
-        currentStreamingMessage.classList.remove('streaming-message');
+        currentStreamingMessage.querySelector('.bot-message').classList.remove('streaming-message');
         currentStreamingMessage = null;
         currentStreamingContent = '';
         currentStreamingThinking = '';

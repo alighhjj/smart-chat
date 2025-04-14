@@ -3,10 +3,11 @@
   <head>
     <meta charset="UTF-8">
     <!-- https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link href="./styles.css" rel="stylesheet">
-    <title>AI Chat 应用</title>
+    <link href="./node_modules/highlight.js/styles/github.css" rel="stylesheet">
+    <title>AI Chat</title>
   </head>
   <body>
     <div id="root"></div>
@@ -15,6 +16,25 @@
     <!-- 引入React脚本 -->
     <script src="./node_modules/react/umd/react.development.js"></script>
     <script src="./node_modules/react-dom/umd/react-dom.development.js"></script>
+    
+    <!-- 引入 marked 和 highlight.js -->
+    <script src="./node_modules/marked/marked.min.js"></script>
+    <script src="./node_modules/highlight.js/lib/highlight.js"></script>
+    
+    <!-- 初始化 marked 配置 -->
+    <script>
+      // 配置 marked 使用 highlight.js 进行代码高亮
+      marked.setOptions({
+        highlight: function(code, lang) {
+          if (lang && hljs.getLanguage(lang)) {
+            try {
+              return hljs.highlight(code, { language: lang }).value;
+            } catch (err) {}
+          }
+          return code;
+        }
+      });
+    </script>
     
     <!-- 引入应用程序脚本 -->
     <script src="./renderer.js"></script>

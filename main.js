@@ -17,7 +17,7 @@ let mainWindow
 const configPath = path.join(app.getPath('userData'), 'config.json')
 
 // DeepSeek API 配置
-const DEEPSEEK_API_URL = 'https://api.deepseek.com/v1/chat/completions'
+const DEEPSEEK_API_URL = 'https://api.deepseek.com/chat/completions'
 
 // 可用的模型配置
 const MODELS = {
@@ -124,7 +124,8 @@ function callDeepSeekAPI(apiKey, messages, modelId = 'deepseek-v3') {
                 model: model.id,
                 messages: safeMessages,
                 temperature: 0.7,
-                max_tokens: 2048
+                max_tokens: 2048,
+                stream: false // 默认不使用流式响应，可根据需要修改
             };
 
             const data = JSON.stringify(requestBody);
@@ -134,7 +135,7 @@ function callDeepSeekAPI(apiKey, messages, modelId = 'deepseek-v3') {
             // 请求选项
             const options = {
                 hostname: 'api.deepseek.com',
-                path: '/v1/chat/completions',
+                path: '/chat/completions', // 更新为官方API路径
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -156,8 +157,12 @@ function callDeepSeekAPI(apiKey, messages, modelId = 'deepseek-v3') {
                         const response = JSON.parse(data);
                         if (res.statusCode === 200) {
                             const content = response.choices[0].message.content;
+                            // 检查是否为推理模型响应，并提取reasoning_content
+                            const reasoningContent = response.choices[0].message.reasoning_content || null;
+                            
                             resolve({
                                 text: content,
+                                reasoningContent: reasoningContent,
                                 modelName: model.name,
                                 error: false
                             });
@@ -223,6 +228,7 @@ async function getAIResponseFromDeepSeek(message, modelId) {
         // 返回结果
         return {
             text: response.text,
+            thinking: response.reasoningContent,
             modelName: model.name,
             error: false
         }
@@ -279,10 +285,19 @@ function generateLocalAIResponse(message) {
 
 // 重置聊天历史
 function resetChatHistory() {
+    // 基础系统消息
+    const baseSystemMessage = '你是DeepSeek AI助手，一个由DeepSeek开发的人工智能助手。你会友好、礼貌地回答用户的问题，并尽可能提供帮助。';
+    
+    // 为推理模型添加特定指令
+    const reasoningSystemMessage = baseSystemMessage + ' 请在回答前先进行思考，在reasoning_content中详细写出你的思考过程，然后在content中给出简明扼要的回答。';
+    
+    // 根据当前模型设置系统消息
+    const systemMessage = currentModel === 'deepseek-r1' ? reasoningSystemMessage : baseSystemMessage;
+    
     chatHistory = [
         {
             role: 'system',
-            content: '你是DeepSeek AI助手，一个由DeepSeek开发的人工智能助手。你会友好、礼貌地回答用户的问题，并尽可能提供帮助。'
+            content: systemMessage
         }
     ]
 }
@@ -305,32 +320,24 @@ function createWindow() {
     mainWindow = new BrowserWindow({
         width: 1200,
         height: 800,
-        minWidth: 800,
-        minHeight: 600,
+        title: 'AI Chat',
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
             nodeIntegration: false,
-            contextIsolation: true,
-            enableRemoteModule: false
+            contextIsolation: true
         },
-        icon: path.join(__dirname, 'assets/icon.png'),
-        backgroundColor: '#f7f7f7',
-        show: false, // Don't show until loaded
-        titleBarStyle: 'hiddenInset', // Use a more modern title bar
+        autoHideMenuBar: true, // 自动隐藏菜单栏
+        icon: path.join(__dirname, 'assets/icon.png') // 设置应用图标
     })
+
+    // 移除菜单栏
+    mainWindow.removeMenu()
 
     // and load the index.html of the app.
     mainWindow.loadFile('index.html')
 
-    // Wait until the content is loaded before showing the window, to avoid white screen
-    mainWindow.once('ready-to-show', () => {
-        mainWindow.show()
-    })
-
     // Open the DevTools.
-    if (process.env.NODE_ENV === 'development') {
-        mainWindow.webContents.openDevTools()
-    }
+    // mainWindow.webContents.openDevTools()
 
     // When the window is closed
     mainWindow.on('closed', function () {
@@ -416,6 +423,9 @@ ipcMain.handle('switch-model', async (event, modelId) => {
 
         // 保存选择
         configManager.saveSelectedModel(modelId);
+        
+        // 重置聊天历史，以使用新模型的系统提示
+        resetChatHistory();
 
         console.log(`已切换到模型: ${MODELS[modelId].name}`);
 
@@ -459,3 +469,129 @@ app.on('window-all-closed', function () {
 
 // In this file you can include the rest of your app's specific main process
 // code. You can also put them in separate files and require them here.
+
+// 处理流式响应
+async function handleStreamResponse(response, event) {
+    try {
+        const reader = response.body.getReader();
+        let accumulatedData = '';
+        let isThinking = true;  // 默认先处理思考过程
+
+        while (true) {
+            const { done, value } = await reader.read();
+            
+            if (done) {
+                break;
+            }
+
+            // 将 Uint8Array 转换为字符串
+            const chunk = new TextDecoder().decode(value);
+            accumulatedData += chunk;
+
+            // 检查是否包含特定标记
+            if (accumulatedData.includes('content') && isThinking) {
+                isThinking = false;
+                accumulatedData = '';  // 清空累积的数据，开始新的内容部分
+                continue;
+            }
+
+            // 发送消息块到渲染进程
+            event.reply('stream-chunk', {
+                chunk: chunk,
+                isThinking: isThinking
+            });
+        }
+
+        // 流式响应结束
+        event.reply('stream-end');
+
+    } catch (error) {
+        console.error('处理流式响应时出错:', error);
+        event.reply('stream-error', { error: error.message });
+    }
+}
+
+// 处理API请求
+async function handleApiRequest(prompt, apiKey, modelConfig, event) {
+    try {
+        const response = await fetch(API_ENDPOINT, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`
+            },
+            body: JSON.stringify({
+                model: modelConfig.model,
+                messages: [{ role: "user", content: prompt }],
+                stream: true,
+                temperature: 0.7,
+                max_tokens: 2000
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`API请求失败: ${response.status} ${response.statusText}`);
+        }
+
+        // 开始流式响应
+        event.reply('stream-start', {
+            messageId: Date.now(),
+            modelName: modelConfig.name
+        });
+
+        const reader = response.body.getReader();
+        let accumulatedData = '';
+        let isThinking = true;
+
+        while (true) {
+            const { done, value } = await reader.read();
+            
+            if (done) {
+                break;
+            }
+
+            // 将 Uint8Array 转换为字符串
+            const chunk = new TextDecoder().decode(value);
+            
+            // 处理数据块
+            if (chunk.includes('content') && isThinking) {
+                isThinking = false;
+                // 发送最后的思考内容
+                if (accumulatedData.trim()) {
+                    event.reply('stream-chunk', {
+                        chunk: accumulatedData.replace(/reasoning_content|content/g, '').trim(),
+                        isThinking: true
+                    });
+                }
+                accumulatedData = '';
+                continue;
+            }
+
+            accumulatedData += chunk;
+
+            // 发送处理后的数据块
+            const cleanedChunk = chunk.replace(/reasoning_content|content/g, '').trim();
+            if (cleanedChunk) {
+                event.reply('stream-chunk', {
+                    chunk: cleanedChunk,
+                    isThinking: isThinking
+                });
+            }
+        }
+
+        // 发送最后一块数据（如果有的话）
+        if (accumulatedData.trim()) {
+            event.reply('stream-chunk', {
+                chunk: accumulatedData.replace(/reasoning_content|content/g, '').trim(),
+                isThinking: false
+            });
+        }
+
+        // 流式响应结束
+        event.reply('stream-end');
+
+    } catch (error) {
+        console.error('API请求失败:', error);
+        event.reply('stream-error', { error: error.message });
+    }
+}
