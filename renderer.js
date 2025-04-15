@@ -18,13 +18,6 @@ const ModelSelector = ({ models, currentModel, onModelChange }) => {
                 }, model.name)
             )
         ),
-        React.createElement('div', { className: 'model-info' },
-            currentModel && `当前模型: ${currentModel.name}`,
-            React.createElement('span', {
-                className: 'model-tooltip',
-                'data-tooltip': currentModel ? currentModel.description : ''
-            }, '❓')
-        )
     );
 };
 
@@ -36,7 +29,7 @@ const ThinkingSection = ({ thinking }) => {
         React.createElement('div', { className: 'thinking-section-title' },
             '思考过程'
         ),
-        React.createElement('div', { 
+        React.createElement('div', {
             className: 'thinking-content',
             dangerouslySetInnerHTML: { __html: marked.parse(thinking) }
         })
@@ -160,26 +153,44 @@ const TypingIndicator = () => {
 
 // 创建消息组件
 const Message = ({ message }) => {
-    const { text, sender, thinking, error, isThinking } = message;
-    
-    // 如果是思考状态，显示思考动画
-    if (isThinking) {
-        return React.createElement('div', { className: 'message-wrapper' },
-            React.createElement('div', { className: 'typing-indicator' },
-                React.createElement('span', null),
-                React.createElement('span', null),
-                React.createElement('span', null)
-            )
+    const [isReasoningExpanded, setIsReasoningExpanded] = React.useState(true);
+    const { text, sender, thinking, error, isStreaming } = message;
+
+    // 当开始显示答案时自动折叠推理过程
+    React.useEffect(() => {
+        if (text && thinking) {
+            setIsReasoningExpanded(false);
+        }
+    }, [text]);
+
+    if (sender === 'user') {
+        return React.createElement('div', { className: 'message user-message' },
+            React.createElement('div', { className: 'message-content' }, text)
         );
     }
 
     const messageClass = `message ${sender === 'bot' ? 'bot-message' : 'user-message'} ${error ? 'error-message' : ''}`;
 
     return React.createElement('div', { className: 'message-wrapper' },
-        thinking && React.createElement(ThinkingSection, { thinking }),
-        React.createElement('div', { 
+        thinking && React.createElement('div', { className: 'thinking-section' },
+            React.createElement('div', {
+                className: 'thinking-section-title',
+                onClick: () => setIsReasoningExpanded(!isReasoningExpanded),
+                style: { cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }
+            },
+                React.createElement('span', null, '思考过程'),
+                React.createElement('span', { className: 'toggle-icon' },
+                    isReasoningExpanded ? '▼' : '▶'
+                )
+            ),
+            isReasoningExpanded && React.createElement('div', {
+                className: 'thinking-content',
+                dangerouslySetInnerHTML: { __html: marked.parse(thinking) }
+            })
+        ),
+        text && React.createElement('div', {
             className: messageClass,
-            dangerouslySetInnerHTML: { __html: text ? marked.parse(text) : '' }
+            dangerouslySetInnerHTML: { __html: marked.parse(text) }
         })
     );
 };
@@ -199,7 +210,8 @@ const FixedSidebar = ({ onOpenApiKey, hasApiKey }) => {
         React.createElement('div', {
             className: 'sidebar-icon',
             title: '设置'
-        }, '⚙️')
+        }, '⚙️'),
+
     );
 };
 
@@ -207,7 +219,7 @@ const FixedSidebar = ({ onOpenApiKey, hasApiKey }) => {
 const ChatSidebar = ({ onNewChat, isSidebarCollapsed, onToggleSidebar }) => {
     return React.createElement('div', { className: `chat-sidebar ${isSidebarCollapsed ? 'collapsed' : ''}` },
         React.createElement('div', { className: 'chat-sidebar-header' },
-            React.createElement('h1', { className: 'app-title' }, 'AI Chat'),
+            React.createElement('h1', { className: 'app-title' }, '对话列表'),
             React.createElement('button', {
                 className: 'toggle-sidebar',
                 onClick: onToggleSidebar,
@@ -217,13 +229,15 @@ const ChatSidebar = ({ onNewChat, isSidebarCollapsed, onToggleSidebar }) => {
         React.createElement('div', { className: 'chat-list' },
             // 这里可以添加聊天列表项
         ),
-        React.createElement('button', {
-            className: 'new-chat-button',
-            onClick: onNewChat,
-            title: '新建对话'
-        },
-            React.createElement('span', { className: 'plus-icon' }, '+'),
-            !isSidebarCollapsed && React.createElement('span', null, '新建对话')
+        React.createElement('div', { className: 'new-chat-button-container' },
+            React.createElement('button', {
+                className: 'new-chat-button',
+                onClick: onNewChat,
+                title: '新建对话'
+            },
+                React.createElement('span', { className: 'plus-icon' }, '+'),
+                !isSidebarCollapsed && React.createElement('span', null, '新建对话')
+            )
         )
     );
 };
@@ -309,20 +323,64 @@ const App = () => {
         }
     }, [messages]);
 
-    // 接收主进程消息
+    // 监听接收消息事件
     React.useEffect(() => {
         if (window.electronAPI) {
             window.electronAPI.receiveMessage((response) => {
                 setIsTyping(false);
-                const botResponse = {
-                    id: Date.now(),
-                    text: response.text,
-                    thinking: response.thinking,
-                    modelName: response.modelName,
-                    sender: 'bot',
-                    error: response.error
-                };
-                setMessages(prevMessages => [...prevMessages, botResponse]);
+
+                if (response.isStreaming) {
+                    // 处理流式响应
+                    setMessages(prevMessages => {
+                        const lastMessage = prevMessages[prevMessages.length - 1];
+                        if (lastMessage && lastMessage.isStreaming) {
+                            // 创建消息的副本
+                            const updatedMessage = { ...lastMessage };
+
+                            // 累积内容而不是替换
+                            if (response.text) {
+                                updatedMessage.text = (updatedMessage.text || '') + response.text;
+                            }
+                            if (response.reasoningContent) {
+                                updatedMessage.thinking = (updatedMessage.thinking || '') + response.reasoningContent;
+                            }
+
+                            if (response.isEnd) {
+                                updatedMessage.isStreaming = false;
+                            }
+
+                            // 返回更新后的消息数组
+                            const updatedMessages = [...prevMessages];
+                            updatedMessages[updatedMessages.length - 1] = updatedMessage;
+                            return updatedMessages;
+                        } else if (!response.isEnd) {
+                            // 创建新的流式消息
+                            return [...prevMessages, {
+                                id: Date.now(),
+                                text: response.text || '',
+                                thinking: response.reasoningContent || '',
+                                modelName: response.modelName,
+                                sender: 'bot',
+                                error: response.error,
+                                isStreaming: true
+                            }];
+                        }
+                        return prevMessages;
+                    });
+                } else {
+                    // 处理非流式响应
+                    if (response.text || response.reasoningContent) {
+                        const botResponse = {
+                            id: Date.now(),
+                            text: response.text || '',
+                            thinking: response.reasoningContent || '',
+                            modelName: response.modelName,
+                            sender: 'bot',
+                            error: response.error
+                        };
+                        setMessages(prevMessages => [...prevMessages, botResponse]);
+                    }
+                }
             });
         }
     }, []);
@@ -421,7 +479,7 @@ const App = () => {
                         message
                     })
                 ),
-                isTyping && React.createElement(TypingIndicator),
+                // isTyping && React.createElement(TypingIndicator),
                 React.createElement('div', { ref: messagesEndRef })
             ),
 
@@ -454,74 +512,256 @@ const App = () => {
 const domContainer = document.getElementById('root');
 ReactDOM.render(React.createElement(App), domContainer);
 
-// 流式消息处理
-let currentStreamingMessage = null;
-let currentStreamingContent = '';
-let currentStreamingThinking = '';
-
-// 开始新的流式消息
-ipcRenderer.on('stream-start', (event, { messageId, modelName }) => {
-    const messagesContainer = document.querySelector('.chat-messages');
-    const messageDiv = document.createElement('div');
-    messageDiv.className = 'message-wrapper';
-    messageDiv.setAttribute('data-message-id', messageId);
-
-    const thinkingSection = document.createElement('div');
-    thinkingSection.className = 'thinking-section';
-    const thinkingTitle = document.createElement('div');
-    thinkingTitle.className = 'thinking-section-title';
-    thinkingTitle.textContent = '思考过程';
-    thinkingSection.appendChild(thinkingTitle);
-    
-    const thinkingContent = document.createElement('div');
-    thinkingContent.className = 'thinking-content';
-    thinkingSection.appendChild(thinkingContent);
-    messageDiv.appendChild(thinkingSection);
-
-    const contentDiv = document.createElement('div');
-    contentDiv.className = 'message bot-message streaming-message';
-    messageDiv.appendChild(contentDiv);
-    
-    messagesContainer.appendChild(messageDiv);
-
-    currentStreamingMessage = messageDiv;
-    currentStreamingContent = '';
-    currentStreamingThinking = '';
-
-    // 滚动到底部
-    messagesContainer.scrollTop = messagesContainer.scrollHeight;
-});
-
-// 接收流式消息块
-ipcRenderer.on('stream-chunk', (event, { chunk, isThinking }) => {
-    if (!currentStreamingMessage) return;
-
-    const contentDiv = currentStreamingMessage.querySelector('.bot-message');
-    const thinkingContent = currentStreamingMessage.querySelector('.thinking-content');
-
-    if (isThinking) {
-        currentStreamingThinking += chunk;
-        thinkingContent.innerHTML = marked.parse(currentStreamingThinking);
-    } else {
-        currentStreamingContent += chunk;
-        contentDiv.innerHTML = marked.parse(currentStreamingContent);
+// 添加新的样式
+const style = document.createElement('style');
+style.textContent = `
+    .app-container {
+        display: flex;
+        width: 100%;
+        height: 100vh;
+        overflow: hidden;
     }
 
-    // 处理代码块高亮
-    document.querySelectorAll('pre code').forEach((block) => {
-        hljs.highlightElement(block);
-    });
-
-    // 滚动到底部
-    document.querySelector('.chat-messages').scrollTop = document.querySelector('.chat-messages').scrollHeight;
-});
-
-// 流式消息结束
-ipcRenderer.on('stream-end', () => {
-    if (currentStreamingMessage) {
-        currentStreamingMessage.querySelector('.bot-message').classList.remove('streaming-message');
-        currentStreamingMessage = null;
-        currentStreamingContent = '';
-        currentStreamingThinking = '';
+    .chat-container {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        position: relative;
+        padding: 0 16px;
     }
-});
+
+    .chat-messages {
+        flex: 1;
+        overflow-y: auto;
+        padding: 20px 0;
+        scrollbar-width: thin;
+        scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
+        width: 100%;
+        max-width: 800px;
+        margin: 0 auto;
+    }
+
+    .chat-messages::-webkit-scrollbar {
+        width: 4px;
+    }
+
+    .chat-messages::-webkit-scrollbar-track {
+        background: transparent;
+    }
+
+    .chat-messages::-webkit-scrollbar-thumb {
+        background-color: rgba(0, 0, 0, 0.2);
+        border-radius: 2px;
+    }
+
+    .chat-messages::-webkit-scrollbar-thumb:hover {
+        background-color: rgba(0, 0, 0, 0.3);
+    }
+
+    /* 统一所有消息容器的样式 */
+    .message-wrapper {
+        width: 100%;
+        max-width: 800px;
+        margin: 0 auto 16px;
+        display: flex;
+        flex-direction: column;
+    }
+
+    /* 用户消息样式 */
+    .message.user-message {
+        width: 100%;
+        max-width: 800px;
+        margin: 0 auto 16px;
+        padding: 16px;
+        border-radius: 8px;
+        background-color: #e3f2fd;
+        font-size: 14px;
+        line-height: 1.6;
+        box-sizing: border-box;
+    }
+
+    /* 机器人消息样式 */
+    .message.bot-message {
+        width: 100%;
+        max-width: 800px;
+        margin: 0 auto 16px;
+        padding: 16px;
+        border-radius: 8px;
+        background-color: #f5f5f5;
+        font-size: 14px;
+        line-height: 1.6;
+        box-sizing: border-box;
+    }
+
+    /* 思考区域样式 */
+    .thinking-section {
+        width: 100%;
+        max-width: 800px;
+        margin: 0 auto 16px;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        overflow: hidden;
+        background-color: #fff;
+        box-sizing: border-box;
+    }
+
+    .thinking-section-title {
+        background-color: #f5f5f5;
+        padding: 8px 16px;
+        font-weight: 500;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        cursor: pointer;
+        user-select: none;
+    }
+
+    .thinking-content {
+        padding: 16px;
+        background-color: #fafafa;
+        white-space: pre-wrap;
+        font-size: 14px;
+        line-height: 1.6;
+    }
+
+    /* 输入区域样式 */
+    .input-container {
+        width: 100%;
+        background-color: #fff;
+        border-top: 1px solid #e0e0e0;
+        padding: 20px 0;
+    }
+
+    /* 模型选择器样式 */
+    .model-selector-container {
+        width: 100%;
+        max-width: 800px;
+        margin: 0 auto 2px;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .model-selector {
+        width: 100%;
+        display: flex;
+    }
+
+    .model-option {
+        padding: 4px 4px;
+        border-radius: 15px;
+        cursor: pointer;
+        background-color:rgb(213, 213, 213);
+        transition: background-color 0.2s;
+        font-size: 8px;
+    }
+
+    .model-option.active {
+        background-color: #2196f3;
+        color: white;
+    }
+
+    .model-info {
+        font-size: 6px;
+        color: #666;
+    }
+
+    /* 输入框容器样式 */
+    .input-section {
+        width: 100%;
+        max-width: 800px;
+        margin: 0 auto;
+        display: flex;
+        flex-direction: column;
+    }
+
+    /* 输入框样式 */
+    .message-input {
+        width: 100%;
+        min-height: 40px;
+        max-height: 200px;
+        padding: 12px;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        resize: vertical;
+        font-family: inherit;
+        font-size: 14px;
+        line-height: 1.6;
+        outline: none;
+        box-sizing: border-box;
+        background-color: #fff;
+    }
+
+    .message-input:focus {
+        border-color: #2196f3;
+    }
+
+    .toggle-icon {
+        font-size: 12px;
+        color: #666;
+        transition: transform 0.2s;
+    }
+
+    /* 确保所有内容区域的宽度一致 */
+    .message-content,
+    .thinking-content,
+    .bot-message,
+    .user-message {
+        width: 100%;
+        box-sizing: border-box;
+    }
+
+    .message-wrapper {
+        margin-bottom: 16px;
+    }
+
+    .thinking-section {
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        overflow: hidden;
+        margin-bottom: 8px;
+    }
+
+    .thinking-section-title {
+        background-color: #f5f5f5;
+        padding: 8px 12px;
+        font-weight: 500;
+    }
+
+    .thinking-content {
+        padding: 12px;
+        background-color: #fafafa;
+        white-space: pre-wrap;
+    }
+
+    .toggle-icon {
+        font-size: 12px;
+        color: #666;
+        transition: transform 0.2s;
+    }
+
+    .message {
+        padding: 12px;
+        border-radius: 8px;
+        margin-bottom: 8px;
+    }
+
+    .user-message {
+        background-color: #e3f2fd;
+    }
+
+    .bot-message {
+        background-color: #f5f5f5;
+    }
+
+    .error-message {
+        background-color: #ffebee;
+        color: #d32f2f;
+    }
+`;
+
+// 移除所有已存在的样式标签
+document.querySelectorAll('style').forEach(el => el.remove());
+
+// 添加新样式
+document.head.appendChild(style);

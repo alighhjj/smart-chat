@@ -125,7 +125,7 @@ function callDeepSeekAPI(apiKey, messages, modelId = 'deepseek-v3') {
                 messages: safeMessages,
                 temperature: 0.7,
                 max_tokens: 2048,
-                stream: false // 默认不使用流式响应，可根据需要修改
+                stream: true // 启用流式响应
             };
 
             const data = JSON.stringify(requestBody);
@@ -135,7 +135,7 @@ function callDeepSeekAPI(apiKey, messages, modelId = 'deepseek-v3') {
             // 请求选项
             const options = {
                 hostname: 'api.deepseek.com',
-                path: '/chat/completions', // 更新为官方API路径
+                path: '/chat/completions',
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -144,33 +144,162 @@ function callDeepSeekAPI(apiKey, messages, modelId = 'deepseek-v3') {
                 }
             };
 
+            let buffer = '';
+            let fullText = '';
+            let fullReasoningContent = '';
+            let hasEnded = false;
+
             // 创建请求
             const req = https.request(options, (res) => {
-                let data = '';
+                if (res.statusCode !== 200) {
+                    reject(new Error(`API请求失败，状态码: ${res.statusCode}`));
+                    return;
+                }
 
+                // 处理流式响应
                 res.on('data', (chunk) => {
-                    data += chunk;
+                    buffer += chunk;
+
+                    // 尝试按行分割并处理每个完整的SSE数据
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop(); // 保留最后一个可能不完整的行
+
+                    for (const line of lines) {
+                        if (line.trim().startsWith('data: ')) {
+                            try {
+                                // 提取JSON数据部分
+                                const jsonStr = line.substring(6); // 跳过 "data: "
+
+                                // 检查是否是结束标记
+                                if (jsonStr.trim() === '[DONE]') {
+                                    if (!hasEnded) {
+                                        hasEnded = true;
+                                        if (mainWindow) {
+                                            mainWindow.webContents.send('receive-message', {
+                                                text: '',
+                                                reasoningContent: '',
+                                                modelName: model.name,
+                                                error: false,
+                                                isStreaming: true,
+                                                isEnd: true
+                                            });
+                                        }
+                                        resolve({
+                                            text: fullText,
+                                            reasoningContent: fullReasoningContent,
+                                            modelName: model.name,
+                                            error: false
+                                        });
+                                    }
+                                    return;
+                                }
+
+                                const response = JSON.parse(jsonStr);
+                                const delta = response.choices[0].delta;
+
+                                // 累积文本
+                                if (delta.content !== undefined) {
+                                    fullText += delta.content || '';
+                                }
+                                if (delta.reasoning_content !== undefined) {
+                                    fullReasoningContent += delta.reasoning_content || '';
+                                }
+
+                                // 发送增量更新
+                                if (mainWindow && !hasEnded) {
+                                    mainWindow.webContents.send('receive-message', {
+                                        text: delta.content || '',
+                                        reasoningContent: delta.reasoning_content || '',
+                                        modelName: model.name,
+                                        error: false,
+                                        isStreaming: true
+                                    });
+                                }
+                            } catch (error) {
+                                console.error('解析流式响应数据失败:', error);
+                            }
+                        }
+                    }
                 });
 
                 res.on('end', () => {
-                    try {
-                        const response = JSON.parse(data);
-                        if (res.statusCode === 200) {
-                            const content = response.choices[0].message.content;
-                            // 检查是否为推理模型响应，并提取reasoning_content
-                            const reasoningContent = response.choices[0].message.reasoning_content || null;
-                            
-                            resolve({
-                                text: content,
-                                reasoningContent: reasoningContent,
-                                modelName: model.name,
-                                error: false
-                            });
-                        } else {
-                            reject(new Error(`API请求失败，状态码: ${res.statusCode}`));
+                    // 处理最后可能剩余的数据
+                    if (buffer.trim()) {
+                        const lines = buffer.split('\n');
+                        for (const line of lines) {
+                            if (line.trim().startsWith('data: ')) {
+                                try {
+                                    const jsonStr = line.substring(6);
+                                    if (jsonStr.trim() === '[DONE]') {
+                                        if (!hasEnded) {
+                                            hasEnded = true;
+                                            if (mainWindow) {
+                                                mainWindow.webContents.send('receive-message', {
+                                                    text: '',
+                                                    reasoningContent: '',
+                                                    modelName: model.name,
+                                                    error: false,
+                                                    isStreaming: true,
+                                                    isEnd: true
+                                                });
+                                            }
+                                            resolve({
+                                                text: fullText,
+                                                reasoningContent: fullReasoningContent,
+                                                modelName: model.name,
+                                                error: false
+                                            });
+                                        }
+                                        return;
+                                    }
+
+                                    const response = JSON.parse(jsonStr);
+                                    const delta = response.choices[0].delta;
+
+                                    // 累积最后的文本
+                                    if (delta.content !== undefined) {
+                                        fullText += delta.content || '';
+                                    }
+                                    if (delta.reasoning_content !== undefined) {
+                                        fullReasoningContent += delta.reasoning_content || '';
+                                    }
+
+                                    // 发送最后的增量更新
+                                    if (mainWindow && !hasEnded) {
+                                        mainWindow.webContents.send('receive-message', {
+                                            text: delta.content || '',
+                                            reasoningContent: delta.reasoning_content || '',
+                                            modelName: model.name,
+                                            error: false,
+                                            isStreaming: true
+                                        });
+                                    }
+                                } catch (error) {
+                                    console.error('解析最后的流式响应数据失败:', error);
+                                }
+                            }
                         }
-                    } catch (error) {
-                        reject(new Error('解析API响应失败: ' + error.message));
+                    }
+
+                    // 如果没有收到[DONE]标记，也要确保结束
+                    if (!hasEnded) {
+                        hasEnded = true;
+                        if (mainWindow) {
+                            mainWindow.webContents.send('receive-message', {
+                                text: '',
+                                reasoningContent: '',
+                                modelName: model.name,
+                                error: false,
+                                isStreaming: true,
+                                isEnd: true
+                            });
+                        }
+                        resolve({
+                            text: fullText,
+                            reasoningContent: fullReasoningContent,
+                            modelName: model.name,
+                            error: false
+                        });
                     }
                 });
             });
@@ -199,10 +328,14 @@ async function getAIResponseFromDeepSeek(message, modelId) {
 
     // 如果没有设置API Key，提示用户设置
     if (!apiKey) {
-        return {
-            text: '您还没有设置DeepSeek API Key，请点击左侧上方的机器人图标进行设置。',
-            error: true
+        if (mainWindow) {
+            mainWindow.webContents.send('receive-message', {
+                text: '您还没有设置DeepSeek API Key，请点击左侧上方的机器人图标进行设置。',
+                error: true,
+                timestamp: Date.now()
+            });
         }
+        return;
     }
 
     try {
@@ -216,29 +349,23 @@ async function getAIResponseFromDeepSeek(message, modelId) {
         const recentMessages = chatHistory.slice(-10)
         const response = await callDeepSeekAPI(apiKey, recentMessages, modelId)
 
-        // 获取模型配置
-        const model = MODELS[modelId] || MODELS['deepseek-v3'];
-
         // 添加AI回复到历史记录
         chatHistory.push({
             role: 'assistant',
             content: response.text
         })
 
-        // 返回结果
-        return {
-            text: response.text,
-            thinking: response.reasoningContent,
-            modelName: model.name,
-            error: false
-        }
+        return response;
     } catch (error) {
         console.error('获取AI回复失败:', error)
 
         // API调用失败的错误处理
-        return {
-            text: `调用DeepSeek API失败: ${error.message}。请检查您的API Key是否正确或网络连接是否正常。`,
-            error: true
+        if (mainWindow) {
+            mainWindow.webContents.send('receive-message', {
+                text: `调用DeepSeek API失败: ${error.message}。请检查您的API Key是否正确或网络连接是否正常。`,
+                error: true,
+                timestamp: Date.now()
+            });
         }
     }
 }
@@ -287,13 +414,13 @@ function generateLocalAIResponse(message) {
 function resetChatHistory() {
     // 基础系统消息
     const baseSystemMessage = '你是DeepSeek AI助手，一个由DeepSeek开发的人工智能助手。你会友好、礼貌地回答用户的问题，并尽可能提供帮助。';
-    
+
     // 为推理模型添加特定指令
     const reasoningSystemMessage = baseSystemMessage + ' 请在回答前先进行思考，在reasoning_content中详细写出你的思考过程，然后在content中给出简明扼要的回答。';
-    
+
     // 根据当前模型设置系统消息
     const systemMessage = currentModel === 'deepseek-r1' ? reasoningSystemMessage : baseSystemMessage;
-    
+
     chatHistory = [
         {
             role: 'system',
@@ -326,12 +453,9 @@ function createWindow() {
             nodeIntegration: false,
             contextIsolation: true
         },
-        autoHideMenuBar: true, // 自动隐藏菜单栏
-        icon: path.join(__dirname, 'assets/icon.png') // 设置应用图标
+        autoHideMenuBar: true,
+        icon: path.join(__dirname, 'assets/icon.png'),
     })
-
-    // 移除菜单栏
-    mainWindow.removeMenu()
 
     // and load the index.html of the app.
     mainWindow.loadFile('index.html')
@@ -354,15 +478,7 @@ ipcMain.on('send-message', async (event, message) => {
     if (mainWindow) {
         try {
             // 调用DeepSeek API获取回复
-            const response = await getAIResponseFromDeepSeek(message, currentModel);
-
-            mainWindow.webContents.send('receive-message', {
-                text: response.text,
-                thinking: response.thinking,
-                modelName: response.modelName,
-                timestamp: Date.now(),
-                error: response.error
-            });
+            await getAIResponseFromDeepSeek(message, currentModel);
         } catch (error) {
             console.error('处理消息失败:', error);
 
@@ -423,7 +539,7 @@ ipcMain.handle('switch-model', async (event, modelId) => {
 
         // 保存选择
         configManager.saveSelectedModel(modelId);
-        
+
         // 重置聊天历史，以使用新模型的系统提示
         resetChatHistory();
 
@@ -479,7 +595,7 @@ async function handleStreamResponse(response, event) {
 
         while (true) {
             const { done, value } = await reader.read();
-            
+
             if (done) {
                 break;
             }
@@ -545,14 +661,14 @@ async function handleApiRequest(prompt, apiKey, modelConfig, event) {
 
         while (true) {
             const { done, value } = await reader.read();
-            
+
             if (done) {
                 break;
             }
 
             // 将 Uint8Array 转换为字符串
             const chunk = new TextDecoder().decode(value);
-            
+
             // 处理数据块
             if (chunk.includes('content') && isThinking) {
                 isThinking = false;
