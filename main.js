@@ -11,6 +11,8 @@ if (process.platform === 'win32') {
 
 // Keep a global reference of the window object, if you don't, the window will
 // be closed automatically when the JavaScript object is garbage collected.
+const defaultWidth = 800;
+const defaultHeight = 600;
 let mainWindow
 
 // API Key配置文件路径
@@ -445,8 +447,11 @@ function initializeModelSelection() {
 function createWindow() {
     // Create the browser window.
     mainWindow = new BrowserWindow({
-        width: 1200,
-        height: 800,
+        width: defaultWidth,
+        height: defaultHeight,
+        minWidth: defaultWidth,
+        minHeight: defaultHeight,
+        resizable: true,
         title: 'AI Chat',
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),

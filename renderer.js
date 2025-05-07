@@ -9,17 +9,19 @@
 // 创建模型选择器组件
 const ModelSelector = ({ models, currentModel, onModelChange }) => {
     return React.createElement('div', { className: 'model-selector-container' },
-        React.createElement('div', { className: 'model-selector' },
-            models.map(model =>
-                React.createElement('div', {
-                    key: model.id,
-                    className: `model-option ${model.id === currentModel.id ? 'active' : ''}`,
-                    onClick: () => onModelChange(model.id)
-                }, model.name)
-            )
-        ),
-    );
-};
+        React.createElement('select', {
+            className: 'model-selector',
+            onChange: (e) => onModelChange(e.target.value)
+        },
+        models.map(model =>
+            React.createElement('option', {
+                key: model.id,
+                value: model.id,
+                className: model.id === currentModel.id ? 'active' : ''
+            }, model.name)
+        )
+    ));
+}
 
 // 创建思考步骤组件
 const ThinkingSection = ({ thinking }) => {
@@ -210,8 +212,7 @@ const FixedSidebar = ({ onOpenApiKey, hasApiKey }) => {
         React.createElement('div', {
             className: 'sidebar-icon',
             title: '设置'
-        }, '⚙️'),
-
+        }, '⚙️')
     );
 };
 
@@ -219,7 +220,7 @@ const FixedSidebar = ({ onOpenApiKey, hasApiKey }) => {
 const ChatSidebar = ({ onNewChat, isSidebarCollapsed, onToggleSidebar }) => {
     return React.createElement('div', { className: `chat-sidebar ${isSidebarCollapsed ? 'collapsed' : ''}` },
         React.createElement('div', { className: 'chat-sidebar-header' },
-            React.createElement('h1', { className: 'app-title' }, '对话列表'),
+            React.createElement('h1', { className: 'app-title' }, 'AI Chat'),
             React.createElement('button', {
                 className: 'toggle-sidebar',
                 onClick: onToggleSidebar,
@@ -450,13 +451,6 @@ const App = () => {
     };
 
     return React.createElement('div', { className: 'app-container' },
-        // API Key设置弹窗
-        React.createElement(ApiKeyModal, {
-            isOpen: isApiKeyModalOpen,
-            onClose: closeApiKeyModal,
-            onSave: handleApiKeySaved
-        }),
-
         // 固定菜单栏
         React.createElement(FixedSidebar, {
             onOpenApiKey: openApiKeyModal,
@@ -471,297 +465,50 @@ const App = () => {
         }),
 
         // 主聊天区域
-        React.createElement('div', { className: 'chat-container' },
-            React.createElement('div', { className: 'chat-messages', ref: messagesEndRef },
-                messages.map(message =>
-                    React.createElement(Message, {
-                        key: message.id,
-                        message
-                    })
-                ),
-                // isTyping && React.createElement(TypingIndicator),
-                React.createElement('div', { ref: messagesEndRef })
+        React.createElement('div', { className: 'chat-area' },
+            React.createElement('div', { className: 'chat-container' },
+                React.createElement('div', { className: 'chat-messages', ref: messagesEndRef },
+                    messages.map(message =>
+                        React.createElement(Message, {
+                            key: message.id,
+                            message
+                        })
+                    ),
+                    // isTyping && React.createElement(TypingIndicator),
+                    React.createElement('div', { ref: messagesEndRef })
+                )
             ),
 
             // 输入区域
             React.createElement('div', { className: 'input-container' },
-                // 模型选择器
-                availableModels.length > 0 && currentModel &&
-                React.createElement(ModelSelector, {
-                    models: availableModels,
-                    currentModel: currentModel,
-                    onModelChange: handleModelChange
-                }),
+            // 模型选择器
+            availableModels.length > 0 && currentModel &&
+            React.createElement(ModelSelector, {
+                models: availableModels,
+                currentModel: currentModel,
+                onModelChange: handleModelChange
+            }),
 
-                React.createElement('div', { className: 'input-section' },
-                    React.createElement('textarea', {
-                        className: 'message-input',
-                        value: inputValue,
-                        onChange: handleInputChange,
-                        onKeyPress: handleKeyPress,
-                        placeholder: '输入聊天内容，按 Enter 发送...',
-                        disabled: isTyping
-                    })
-                )
+            React.createElement('div', { className: 'input-section' },
+                React.createElement('textarea', {
+                    className: 'message-input',
+                    value: inputValue,
+                    onChange: handleInputChange,
+                    onKeyPress: handleKeyPress,
+                    placeholder: '输入聊天内容，按 Enter 发送...',
+                    disabled: isTyping
+                })
             )
-        )
-    );
+        ),
+        
+        // API Key设置弹窗 - 移到App根节点下
+        React.createElement(ApiKeyModal, {
+            isOpen: isApiKeyModalOpen,
+            onClose: closeApiKeyModal,
+            onSave: handleApiKeySaved
+        })
+    )
+);
 };
-
-// 渲染React应用
-const domContainer = document.getElementById('root');
-ReactDOM.render(React.createElement(App), domContainer);
-
-// 添加新的样式
-const style = document.createElement('style');
-style.textContent = `
-    .app-container {
-        display: flex;
-        width: 100%;
-        height: 100vh;
-        overflow: hidden;
-    }
-
-    .chat-container {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        height: 100%;
-        position: relative;
-        padding: 0 16px;
-    }
-
-    .chat-messages {
-        flex: 1;
-        overflow-y: auto;
-        padding: 20px 0;
-        scrollbar-width: thin;
-        scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
-        width: 100%;
-        max-width: 800px;
-        margin: 0 auto;
-    }
-
-    .chat-messages::-webkit-scrollbar {
-        width: 4px;
-    }
-
-    .chat-messages::-webkit-scrollbar-track {
-        background: transparent;
-    }
-
-    .chat-messages::-webkit-scrollbar-thumb {
-        background-color: rgba(0, 0, 0, 0.2);
-        border-radius: 2px;
-    }
-
-    .chat-messages::-webkit-scrollbar-thumb:hover {
-        background-color: rgba(0, 0, 0, 0.3);
-    }
-
-    /* 统一所有消息容器的样式 */
-    .message-wrapper {
-        width: 100%;
-        max-width: 800px;
-        margin: 0 auto 16px;
-        display: flex;
-        flex-direction: column;
-    }
-
-    /* 用户消息样式 */
-    .message.user-message {
-        width: 100%;
-        max-width: 800px;
-        margin: 0 auto 16px;
-        padding: 16px;
-        border-radius: 8px;
-        background-color: #e3f2fd;
-        font-size: 14px;
-        line-height: 1.6;
-        box-sizing: border-box;
-    }
-
-    /* 机器人消息样式 */
-    .message.bot-message {
-        width: 100%;
-        max-width: 800px;
-        margin: 0 auto 16px;
-        padding: 16px;
-        border-radius: 8px;
-        background-color: #f5f5f5;
-        font-size: 14px;
-        line-height: 1.6;
-        box-sizing: border-box;
-    }
-
-    /* 思考区域样式 */
-    .thinking-section {
-        width: 100%;
-        max-width: 800px;
-        margin: 0 auto 16px;
-        border: 1px solid #e0e0e0;
-        border-radius: 8px;
-        overflow: hidden;
-        background-color: #fff;
-        box-sizing: border-box;
-    }
-
-    .thinking-section-title {
-        background-color: #f5f5f5;
-        padding: 8px 16px;
-        font-weight: 500;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        cursor: pointer;
-        user-select: none;
-    }
-
-    .thinking-content {
-        padding: 16px;
-        background-color: #fafafa;
-        white-space: pre-wrap;
-        font-size: 14px;
-        line-height: 1.6;
-    }
-
-    /* 输入区域样式 */
-    .input-container {
-        width: 100%;
-        background-color: #fff;
-        border-top: 1px solid #e0e0e0;
-        padding: 20px 0;
-    }
-
-    /* 模型选择器样式 */
-    .model-selector-container {
-        width: 100%;
-        max-width: 800px;
-        margin: 0 auto 2px;
-        display: flex;
-        flex-direction: column;
-    }
-
-    .model-selector {
-        width: 100%;
-        display: flex;
-    }
-
-    .model-option {
-        padding: 4px 4px;
-        border-radius: 15px;
-        cursor: pointer;
-        background-color:rgb(213, 213, 213);
-        transition: background-color 0.2s;
-        font-size: 8px;
-    }
-
-    .model-option.active {
-        background-color: #2196f3;
-        color: white;
-    }
-
-    .model-info {
-        font-size: 6px;
-        color: #666;
-    }
-
-    /* 输入框容器样式 */
-    .input-section {
-        width: 100%;
-        max-width: 800px;
-        margin: 0 auto;
-        display: flex;
-        flex-direction: column;
-    }
-
-    /* 输入框样式 */
-    .message-input {
-        width: 100%;
-        min-height: 40px;
-        max-height: 200px;
-        padding: 12px;
-        border: 1px solid #e0e0e0;
-        border-radius: 8px;
-        resize: vertical;
-        font-family: inherit;
-        font-size: 14px;
-        line-height: 1.6;
-        outline: none;
-        box-sizing: border-box;
-        background-color: #fff;
-    }
-
-    .message-input:focus {
-        border-color: #2196f3;
-    }
-
-    .toggle-icon {
-        font-size: 12px;
-        color: #666;
-        transition: transform 0.2s;
-    }
-
-    /* 确保所有内容区域的宽度一致 */
-    .message-content,
-    .thinking-content,
-    .bot-message,
-    .user-message {
-        width: 100%;
-        box-sizing: border-box;
-    }
-
-    .message-wrapper {
-        margin-bottom: 16px;
-    }
-
-    .thinking-section {
-        border: 1px solid #e0e0e0;
-        border-radius: 8px;
-        overflow: hidden;
-        margin-bottom: 8px;
-    }
-
-    .thinking-section-title {
-        background-color: #f5f5f5;
-        padding: 8px 12px;
-        font-weight: 500;
-    }
-
-    .thinking-content {
-        padding: 12px;
-        background-color: #fafafa;
-        white-space: pre-wrap;
-    }
-
-    .toggle-icon {
-        font-size: 12px;
-        color: #666;
-        transition: transform 0.2s;
-    }
-
-    .message {
-        padding: 12px;
-        border-radius: 8px;
-        margin-bottom: 8px;
-    }
-
-    .user-message {
-        background-color: #e3f2fd;
-    }
-
-    .bot-message {
-        background-color: #f5f5f5;
-    }
-
-    .error-message {
-        background-color: #ffebee;
-        color: #d32f2f;
-    }
-`;
-
-// 移除所有已存在的样式标签
-document.querySelectorAll('style').forEach(el => el.remove());
-
-// 添加新样式
-document.head.appendChild(style);
+// 渲染App组件
+ReactDOM.render(React.createElement(App, null), document.getElementById('root'));
